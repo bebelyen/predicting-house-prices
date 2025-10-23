@@ -1,0 +1,324 @@
+---
+title: "Stats 101A - Group Project - Results and Interpretation"
+author: "Joey Lee, Megha Ravi, Bebel Yen"
+date: "2025-02-27"
+output: pdf_document
+---
+
+```{r}
+# load dataset
+library(dplyr)
+final_housing_data <- read.csv("final_housing_data.csv")
+final_housing_data <- final_housing_data[,-1]
+
+dim(final_housing_data)
+```
+The final cleaned dataset has 14881 observations and 4 variables. We now begin the process of model-fitting.
+
+## Model 1
+For our first candidate model, we fit the untransformed response variable against the untransformed predictor variables.
+
+```{r}
+attach(final_housing_data)
+
+m1 <- lm(latestPrice ~ numOfBathrooms + livingAreaSqFt + avgSchoolRating)
+summary(m1)
+```
+The corresponding linear equation is:
+$$latestPrice  =  -100300  +  36580(numOfBathrooms)  +  237.8(livingAreaSqFt)  -  1953(avgSchoolRating)$$
+
+The predictor variables numOfBathrooms, livingAreaSqFt, and avgSchoolRating are all significant with p-values < alpha = 0.05, while avgSchoolRating is insignificant with p-value = 0.239 > alpha. Overall F-test is highly significant with p-value < alpha, leading us to conclude that at least one predictor has a significant linear relationship with the response variable. R-squared of this model is 0.4123, indicating that around 41.23% of variation in housing prices is explained by our model. 
+
+### Model 1: Analysis
+
+Let's examine the diagnostic plots, outliers, leverage points, and influential points for this model.
+```{r}
+par(mfrow=c(2,2))
+plot(m1)
+```
+The trend line in Residuals vs Fitted Plot appears mostly horizontal at 0, indicating that there is linearity in relationships between response and predictor variables. Based on this, we would conclude that linearity assumption is met. However, Q-Q Residuals Plot shows that the standardized residuals follow a heavy-tailed distribution, suggesting that the normality of errors assumptions is violated. Heteroscedasticity can also be seen in both the Residuals vs Fitted and Scale-Location Plots, with residuals clustering towards the lower left parts of the graphs but thinning out at the larger fitted values. 
+
+Observation 2289 is particularly interesting because it shows up on all four diagnostic plots, and its residual is furthest away from the points. From the Residuals vs Leverage Plot, we can that see its Cook's Distance is greater than 1, indicating that it heavily influences the regression model due to high leverage and/or being an outlier. 
+
+We examine this observation in more detail:
+```{r}
+filtered_housing_data <- read.csv("filtered_housing_data.csv")
+filtered_housing_data <- filtered_housing_data[,-1]
+
+filtered_housing_data[2289,]
+```
+This observation belongs to 12400 Cedar St, listed for $13,500,000 with 15394	square feet of living area, 13 bathrooms, and an average school rating of 8.33. This house's listed price is more than 30 standard deviations away from the mean, and it has a standardized residual of 29.25, making it an extreme outlier. The number of bathrooms is also more than 10 standard deviations away from the mean number of bathrooms, giving it high leverage. Upon checking with Zillow, however, the data entered for this address appears to be accurate, so we do not remove this observation. 
+
+We also checked the gross numbers of outliers, bad leverage points, and influential points:
+```{r}
+n <- 14881; p <- 3
+stanres <- rstandard(m1)
+outliers <- names(stanres[abs(stanres) > 2]) # outliers
+length(outliers) # number of outliers
+
+leverages <- names(hatvalues(m1)[hatvalues(m1) > 2*((p+1)/n)]) # leverage points
+
+bad_leverage <- outliers[outliers %in% leverages] # bad leverage points
+length(bad_leverage) # number of bad leverage points
+
+length(cooks.distance(m1)[cooks.distance(m1) > 4/(n-2)]) # number of influential points
+```
+Overall, this model has 428 outliers, 168 bad leverage points, and 555 influential points in all, which seems quite a lot. This indicates that many individual points do not fit the trend or have outsized influence on the regression.
+
+The relatively low R-squared, model assumption violations, and lack of significance of one predictor means that this model has much to improve upon. We next used the Box-Cox method to see how variable transformation could help us fix this model's shortcomings.
+
+## Model 2
+```{r}
+# Box-Cox
+library(car)
+bc <- powerTransform(cbind(latestPrice, livingAreaSqFt, numOfBathrooms, avgSchoolRating))
+summary(bc)
+```
+Likelihood ratio test that all transformation parameters are equal to 0 has p-value <2.22e-16, indicating that log-transformation of all variables is not necessary. Likelihood ratio test that no transformations are needed for any parameters also has p-value <2.22e-16, indicating that some type of transformation is needed for at least one variable.
+
+We decided to use the recommended rounded power transformations to fit our second candidate model, taking the log of the response variable since its rounded power is close to 0:
+
+```{r}
+avgSchoolRating_pt <- avgSchoolRating^0.65
+livingAreaSqFt_pt <- livingAreaSqFt^0.15
+numOfBathrooms_pt <- (numOfBathrooms)^0.43
+m2 <- lm(log(latestPrice) ~ numOfBathrooms_pt + livingAreaSqFt_pt + avgSchoolRating_pt)
+summary(m2)
+```
+This yields the regression equation:
+$$log(latestPrice) = 8.486 + 1.187(livingAreaSqFt)^{0.15} + 0.182(numOfBathrooms)^{0.43} + 0.159(avgSchoolRating)^{0.65}$$
+
+The regression summary shows that all three transformed predictor variables have significant p-values. Overall F-test is also highly significant, so we reject the null hypothesis that no predictors are significant. However, R-squared has decreased slightly from our first candidate model to 0.3932, indicating that this model explains around 39.32% of the variation in latestPrice. 
+
+Since Model 2 still violates many assumptions, we used inverse response plot to see if trying a different transformation on our response variable could help.
+```{r}
+inverseResponsePlot(lm(latestPrice ~ numOfBathrooms_pt + livingAreaSqFt_pt + avgSchoolRating_pt, key=TRUE))
+```
+We can see from the inverse response plot that a power transformation of 0.3 might be a little better than log for modeling latestPrice.
+We fitted another version of Model 2, keeping the power transformations of predictors, but transforming latestPrice by the power of 0.3 instead of log:
+
+```{r}
+m2_1 <- lm((latestPrice^0.3 ~ numOfBathrooms_pt + livingAreaSqFt_pt + avgSchoolRating_pt))
+summary(m2_1)
+```
+All predictors are highly significant. Overall F-test is also highly significant. R-squared is a little better than the log-transformed response model, explaining around 40.2% of variation in latestPrice.
+
+```{r}
+par(mfrow=c(2,2))
+plot(m2_1)
+```
+Compared to version of Model 2 with the log-transformed response, variance seems a little more constant in the Scale-Location Plot. In the Q-Q Plot, the magnitude of the deviation of the residuals has also reduced. Unlike with the log-transformed response, there aren't any standardized residuals with absolute values greater than 9, indicating the normality of errors is a little better.
+
+```{r}
+# Comparison of Standardized Residuals for Both Versions of Model 2:
+
+rstandard(m2_1)[abs(rstandard(m2_1))>5] # Model with latestPrice^0.3
+
+rstandard(m2)[abs(rstandard(m2))>5] # Model with log(latestPrice)
+```
+Overall there are still pretty significant model assumption violations, but Model 2 fitted with latestPrice^0.3 seems to be the best model so far.
+
+### Model 2: Analysis
+Let's examine the diagnostic plots, outliers, leverage points, and influential points.
+```{r}
+par(mfrow=c(2,2))
+plot(m2_1)
+```
+We see that constant variance has improved somewhat from Model 1, with the trend line in Scale-Location Plot now flatter and straighter. In both Residuals vs Fitted and Scale-Location Plots, the also residuals appear more evenly and randomly scattered than the first model, which is another sign that variance is more constant. Like in Model 1, we conclude that linearity assumption is met since the line in the Residuals vs Fitted plot is mostly horizontal at 0. Residuals vs Leverage Plot shows there are no points with very high Cook's Distance (over 0.5), which is also a good sign.  Q-Q Plot reveals that the normality of errors assumption is still violated, showing a somewhat heavy-tailed distribution with residuals close to the left tail deviating from the diagonal line. However, unlike previous models, there are no standardized residuals greater than 9, which is a sign of improvement.
+
+In the Residuals vs Leverage Plot, Observation 10366 appears to have unusually high leverage. We investigate this point:
+```{r}
+filtered_housing_data[10366,]
+```
+The observation belongs to 410 Post Road Dr, which is listed for $185,000, with 8647 square feet of living area, an average school rating of 3, and 1 bathroom. The living area dimensions and number of bathrooms are each several standard deviations away from the respective predictor means. Since having over 8000 square feet of living area with a single bathroom is unusual, we cross-checked this data with Zillow. We concluded that the number of bathrooms is likely to be in error, so we removed this observation from the dataset. 
+```{r}
+filtered_housing_data <- filtered_housing_data %>% 
+  filter(!(streetAddress == "410 Post Road Dr"))
+final_housing_data <- filtered_housing_data %>% 
+  select(latestPrice, livingAreaSqFt, numOfBathrooms, avgSchoolRating)
+dim(final_housing_data)
+```
+This leaves us with 14880 observations.
+
+We also looked at the gross numbers of outliers, bad leverage points, and influential points.
+```{r}
+n <- 14881; p <- 3
+stanres <- rstandard(m2_1)
+outliers <- names(stanres[abs(stanres) > 2]) # outliers
+length(outliers)
+
+leverages <- names(hatvalues(m2_1)[hatvalues(m2_1) > 2*((p+1)/n)]) # leverage points
+
+bad_leverage <- outliers[outliers %in% leverages] # bad leverage points
+length(bad_leverage) # number of bad leverage points
+
+length(cooks.distance(m2_1)[cooks.distance(m2_1) > 4/(n-2)]) # number of influential points 
+```
+There are 682 outliers, 169 bad leverage points, and 759 influential points in total. Like with the first model, the fact that there are so many points that don't fit the trend or are heavily influencing the regression may be a sign that the linear model is not a good fit.
+
+We also looked into whether multicollinearity may be affecting our model:
+```{r}
+par(mfrow=c(2,2))
+avPlot(m2_1, variable=numOfBathrooms_pt, ask=FALSE)
+avPlot(m2_1, variable=livingAreaSqFt_pt, ask=FALSE)
+avPlot(m2_1, variable=avgSchoolRating_pt, ask=FALSE)
+
+vif(m2_1)
+```
+The Added-Variable Plots show that the direction of the slopes are consistent with their corresponding regression coefficients, a sign that there is likely not heavy multicollinearity in our model. VIFs are also all below 5, indicating that multicollinearity is unlikely to be an issue. However, numOfBathrooms and avgSchoolRating have very weak slopes, suggesting that these variables do not seem to contribute as much to the regression as livingAreaSqFt.
+
+Even though R-squared for Model 2 was slightly lower than Model 1, Model 2 was an improvement in terms of adherence to model assumptions, especially constant variance. This is an important assumption to satisfy since the reliability of inference tools derived from this model hinges in part upon having constant variance. Since major assumption violations remain, especially regarding normality of error terms, we continued to explore other ways to improve our model.
+
+## Model 3
+We next implemented variable selection by using forward selection to see if bringing back variables we previously eliminated would help us improve upon the shortcomings of the previous models. 
+
+To help us, we also created a new variable, age, by subtracting the year the dataset was scraped, 2021, from the variable yearBuilt, giving the age in years of each house. We speculated there may be a preference for newer homes by homebuyers, which could possibly influence the relationship between the age and price of the home. 
+
+Using AIC and BIC as the criteria, we then used forward selection to build upon Model 2 to see which variables would contribute the most to our regression.
+
+```{r}
+final_housing_data <- filtered_housing_data |>
+  mutate(age = 2021 - yearBuilt) |> # create age variable
+  select(latestPrice, livingAreaSqFt, numOfBathrooms, avgSchoolRating, age, propertyTaxRate, 
+         lotSizeSqFt, avgSchoolDistance, numOfStories, numOfCommunityFeatures) 
+
+attach(final_housing_data)
+avgSchoolRating_pt <- avgSchoolRating^0.65
+livingAreaSqFt_pt <- livingAreaSqFt^0.15
+numOfBathrooms_pt <- (numOfBathrooms)^0.43
+
+mint <- lm(latestPrice^0.3 ~ livingAreaSqFt_pt + numOfBathrooms_pt + 
+    avgSchoolRating_pt)
+
+# Using AIC as criterion
+forwardAIC <- step(mint, scope=list(lower=~1, 
+                                    upper=~livingAreaSqFt_pt + numOfBathrooms_pt + 
+    avgSchoolRating_pt + age + propertyTaxRate + lotSizeSqFt + 
+      avgSchoolDistance + numOfStories + numOfCommunityFeatures), direction="forward")
+
+# Using BIC as criterion
+forwardBIC <- step(mint, scope=list(lower=~1, 
+                                    upper=~livingAreaSqFt_pt + numOfBathrooms_pt + 
+    avgSchoolRating_pt + age + propertyTaxRate + lotSizeSqFt + avgSchoolDistance + 
+      numOfStories + numOfCommunityFeatures), direction="forward", k=log(length(final_housing_data)))
+```
+We can see that both AIC and BIC decrease substantially after adding the age variable. Therefore, we chose to fit our final model based on this suggestion.
+
+```{r}
+m3 <- lm(latestPrice^0.3 ~ livingAreaSqFt_pt + numOfBathrooms_pt + avgSchoolRating_pt + 
+    age)
+summary(m3)
+```
+The corresponding regression equation is:
+
+$$latestPrice^{0.3} = -37.939 + 21.138(livingAreaSqFt)^{0.15} + 8.174(numOfBathrooms)^{0.43} +$$
+$$1.680(avgSchoolRating)^{0.65} + 0.118(age)$$
+
+All predictors are highly significant with p-values <2e-16. Overall F-test is also highly significant with p-value < 2.2e-16. R-squared is the best of all our models, indicating that 46.77% of variation in housing prices is explained by this model.
+
+### Model 3: Analysis
+Let's examine the diagnostic plots, outliers, leverage points, and influential points.
+```{r}
+par(mfrow=c(2,2))
+plot(m3)
+```
+Residuals vs Fitted and Scale-Location Plots look pretty similar to Model 2, with residuals more evenly and randomly scattered than Model 1, but not to the point where we would conclude that variance is sufficiently constant. Q-Q Plot is also similar to Model 2, showing slightly heavy-tailed distribution of residuals, indicating that normality of errors assumption is still not met. However, like the other two models, we would say that the linearity assumption is met since trend line in the Residuals vs Fitted Plot is quite straight and horizontal at 0.
+
+Let's investigate Observations 5718 and 12956, which appear to be outliers:
+```{r}
+filtered_housing_data[5718,]
+filtered_housing_data[12956,]
+```
+Observation 5718 corresponds to 1812 Eagles Glen Cv, which has a listed price of $5,600. On Zillow, the current listing price for this address is $1,576,200. Upon cross-checking with other real estate websites, we found no other sources which could corroborate the $5600 listing price. Based on a 5-year estimate history of housing prices, it was listed for around $1,100,000 in 2021, the year this dataset was scraped. For this reason, we believe the price is likely to be an error and removed this observation from the dataset.
+
+Observation 12957 belongs to 1500 Hartford Rd, which has a similarly low price of $6,300. Upon checking real estate websites, we also could not back up this price, and it was estimated to be selling for around $1,100,000 in 2021. We also removed this observation.
+
+(Like in Model 2, Observation 10366 also features on the diagnostic plots, but for reasons stated before, we did not remove it.)
+
+```{r}
+filtered_housing_data <- filtered_housing_data %>% 
+  filter(!(streetAddress == "1500 Hartford Rd"))
+filtered_housing_data <- filtered_housing_data %>% 
+  filter(!(streetAddress == "1812 Eagles Glen Cv"))
+
+final_housing_data <- filtered_housing_data %>% 
+  mutate(age = 2021 - yearBuilt) |> # create age variable
+  select(latestPrice, livingAreaSqFt, numOfBathrooms, avgSchoolRating, age)
+dim(final_housing_data)
+```
+
+Let's examine the total number of outliers, bad leverage points, and influential points.
+```{r}
+n <- 14880; p <- 4
+stanres <- rstandard(m3)
+outliers <- names(stanres[abs(stanres) > 2]) # outliers
+length(outliers)
+
+leverages <- names(hatvalues(m3)[hatvalues(m3) > 2*((p+1)/n)]) # leverage points
+
+bad_leverage <- outliers[outliers %in% leverages] # bad leverage points
+length(bad_leverage) # number of bad leverage points
+
+length(cooks.distance(m3)[cooks.distance(m3) > 4/(n-2)]) # number of influential points 
+```
+Like in the previous models, there is a high number of outliers, bad leverage points, and influential points. Since there are so many individual points that don't fit and/or disproportionately influence the trend, this indicates that perhaps the linear relationships we are trying to model are not very strong, or there exists non-linear relationships between the variables of interest that we cannot capture.
+
+We also investigate if multicollinearity may be an issue:
+```{r}
+par(mfrow=c(2,2))
+avPlot(m3, variable=livingAreaSqFt_pt, ask=FALSE)
+avPlot(m3, variable=numOfBathrooms_pt, ask=FALSE)
+avPlot(m3, variable=avgSchoolRating_pt, ask=FALSE)
+avPlot(m3, variable=age, ask=FALSE)
+
+vif(m3)
+```
+Direction of the slopes on the Added-Variable Plots are consistent with what we might expect from their respective regression coefficients, which is a good sign. VIFs below 5 also imply that multicollinearity among the predictors is not a big issue. However, the subtle slopes on numOfBathrooms, avgSchoolRating, and age imply that they do not contribute as much to the regression as livingAreaSqFt, after adjusting for other predictors' effects. 
+
+Finally, we compared adjusted R-squared, AIC, AICc, and BIC to decide which candidate model was the best.
+```{r}
+# Adjusted R2
+Rad1 <- summary(m1)$adj.r.squared
+Rad2 <- summary(m2_1)$adj.r.squared
+Rad3 <- summary(m3)$adj.r.squared
+
+# AIC
+AIC1 <- extractAIC(m1)[2]
+AIC2 <- extractAIC(m2_1)[2]
+AIC3 <- extractAIC(m3)[2]
+
+# AICc
+AICc1 <- extractAIC(m1)[2]+(2*(3+2)*(3+3)/(14881-3-1))
+AICc2 <- extractAIC(m2_1)[2]+(2*(3+2)*(3+3)/(14881-3-1))
+AICc3 <- extractAIC(m3)[2]+(2*(4+2)*(4+3)/(14880-4-1))
+
+# BIC
+BIC1 <- extractAIC(m1, k=log(14881))[2]
+BIC2 <- extractAIC(m2_1, k=log(14881))[2]
+BIC3 <- extractAIC(m3, k=log(14880))[2]
+
+all_models <- data.frame(
+  AdjR2 = c(Rad1, Rad2, Rad3),
+  AIC = c(AIC1, AIC2, AIC3),
+  AICc = c(AICc1, AICc2, AICc3),
+  BIC = c(BIC1, BIC2, BIC3)
+)
+all_models
+```
+Based on all four criteria, Model 3 emerges as the clear winner.
+
+We also conducted a partial F-test to compare Model 2 vs Model 3. For this purpose, we refitted the models without the problematic observations we removed along the way so they are both fitted to the same dataset:
+```{r}
+# Model 2
+avgSchoolRating_pt <- avgSchoolRating^0.65
+livingAreaSqFt_pt <- livingAreaSqFt^0.15
+numOfBathrooms_pt <- numOfBathrooms^0.43
+m2_1 <- lm(latestPrice^0.3 ~ livingAreaSqFt_pt + numOfBathrooms_pt + avgSchoolRating_pt)
+
+# Model 3
+m3 <- lm(latestPrice^0.3 ~ livingAreaSqFt_pt + numOfBathrooms_pt + avgSchoolRating_pt + 
+    age)
+
+anova(m2_1, m3) 
+```
+Comparing Model 3 and Model 2, we reject the null hypothesis that the age variable is insignificant, leading us to conclude that Model 3 is the better model.
